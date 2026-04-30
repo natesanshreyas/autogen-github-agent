@@ -1,44 +1,95 @@
 # AutoGen GitHub Agent
 
-AutoGen 0.4 `AssistantAgent` demonstrating the three framework-native ways to define tools.
+AutoGen 0.4 agents calling GitHub via two approaches — direct `FunctionTool`/`BaseTool` and an MCP server.
 
-## Tool patterns covered
+## Files
 
-| Pattern | Class | When to use |
-|---|---|---|
-| `FunctionTool` | `autogen_core.tools.FunctionTool` | Wrap an existing async function; hold a reference to inspect `.schema` or call `.run_json()` directly |
-| `BaseTool` subclass | `autogen_core.tools.BaseTool` | OOP approach with Pydantic models for args and return type; full type safety |
-| Direct invocation | `tool.run_json()` + `CancellationToken` | Test tools outside an agent |
+| File | Description |
+|---|---|
+| `gh_agent_tool_call.py` | `FunctionTool` and `BaseTool` patterns — tools defined directly in Python |
+| `mcp_server.py` | GitHub MCP server (FastMCP over stdio) — exposes `search_repos` and `get_open_issues` as MCP tools |
+| `gh_agent_mcp.py` | Agent that spawns the MCP server, discovers tools at runtime, returns a JSON payload |
+| `server.py` | FastAPI wrapper — exposes `POST /query` for ACA deployment |
+| `terraform/` | Terraform for Azure Container Apps deployment |
 
-## Key APIs
+## MCP approach
 
-```python
-from autogen_core import CancellationToken
-from autogen_core.tools import BaseTool, FunctionTool
+The agent spawns `mcp_server.py` as a subprocess via `StdioServerParams`. AutoGen discovers the available tools from the server at runtime, runs the agent, and returns a structured JSON payload:
 
-tool.schema                        # ToolSchema TypedDict sent to the LLM
-tool.run_json(args_dict, token)    # invoke directly from code
-tool.return_value_as_string(result)# format result for display
+```json
+{
+  "question": "...",
+  "answer": "...",
+  "data": [...],
+  "tools_called": ["search_repos", "get_open_issues"],
+  "tools_available": ["search_repos", "get_open_issues"],
+  "message_count": 6
+}
 ```
 
 ## Setup
 
 ```bash
 pip install -r requirements.txt
-```
 
-```bash
 export OPENAI_API_KEY=sk-...
-export GITHUB_TOKEN=ghp_...   # optional — raises rate limit 60 → 5,000 req/hr
+export GITHUB_TOKEN=ghp_...   # optional
 ```
 
-## Run
+## Run locally
 
 ```bash
-python gh_agent_tool_call.py
+# MCP agent — returns JSON payload
+python gh_agent_mcp.py
+python gh_agent_mcp.py "find top rust web framework repos"
+
+# HTTP server
+uvicorn server:app --reload --port 8000
+curl -X POST http://localhost:8000/query \
+  -H "Content-Type: application/json" \
+  -d '{"question": "top LLM agent repos"}'
 ```
 
-Output:
-1. Tool schemas printed — exactly what gets sent to the LLM
-2. Direct tool invocation without an agent
-3. Full agent run streaming `ToolCallMessage` / `ToolCallResultMessage` / `TaskResult`
+## Deploy to Azure Container Apps
+
+### 1. Provision infrastructure
+
+```bash
+cd terraform
+cp terraform.tfvars.example terraform.tfvars
+# fill in terraform.tfvars
+
+terraform init
+terraform apply
+```
+
+### 2. Build and push image
+
+```bash
+ACR=$(terraform output -raw acr_login_server)
+az acr login --name $ACR
+
+docker build -t $ACR/github-mcp-agent:latest ..
+docker push $ACR/github-mcp-agent:latest
+```
+
+### 3. Trigger new revision
+
+```bash
+az containerapp update \
+  --name github-mcp-agent \
+  --resource-group github-agent-rg \
+  --image $ACR/github-mcp-agent:latest
+```
+
+App URL is in `terraform output app_url`. Query endpoint: `POST <url>/query`.
+
+## Terraform resources
+
+| Resource | Purpose |
+|---|---|
+| Resource group | Container for all resources |
+| Log Analytics workspace | Required by Container App Environment |
+| Container Registry (ACR) | Stores Docker image |
+| Container App Environment | ACA runtime environment |
+| Container App | Runs the agent, scales to 0 when idle |

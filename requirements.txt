@@ -1,4 +1,7 @@
 autogen-agentchat
-autogen-ext[openai]
+autogen-ext[openai,mcp]
 httpx
 pydantic
+mcp
+fastapi
+uvicorn[standard]
