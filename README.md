@@ -1,15 +1,25 @@
 # AutoGen GitHub Agent
 
-AutoGen 0.4 `AssistantAgent` using `FunctionTool` to call the GitHub REST API.
+AutoGen 0.4 `AssistantAgent` demonstrating the three framework-native ways to define tools.
 
-Demonstrates how plain Python functions — annotated with type hints and docstrings — are automatically converted into tool schemas the LLM can reason over and invoke. No manual JSON schema required.
+## Tool patterns covered
 
-## Tools
+| Pattern | Class | When to use |
+|---|---|---|
+| `FunctionTool` | `autogen_core.tools.FunctionTool` | Wrap an existing async function; hold a reference to inspect `.schema` or call `.run_json()` directly |
+| `BaseTool` subclass | `autogen_core.tools.BaseTool` | OOP approach with Pydantic models for args and return type; full type safety |
+| Direct invocation | `tool.run_json()` + `CancellationToken` | Test tools outside an agent |
 
-| Tool | Description |
-|---|---|
-| `search_github_repos` | Search repos by keyword, returns names, descriptions, star counts |
-| `get_repo_open_issues` | Fetch recent open issues for a given owner/repo |
+## Key APIs
+
+```python
+from autogen_core import CancellationToken
+from autogen_core.tools import BaseTool, FunctionTool
+
+tool.schema                        # ToolSchema TypedDict sent to the LLM
+tool.run_json(args_dict, token)    # invoke directly from code
+tool.return_value_as_string(result)# format result for display
+```
 
 ## Setup
 
@@ -17,11 +27,9 @@ Demonstrates how plain Python functions — annotated with type hints and docstr
 pip install -r requirements.txt
 ```
 
-Set environment variables:
-
 ```bash
-export OPENAI_API_KEY=<your key>
-export GITHUB_TOKEN=<your personal access token>   # optional, raises rate limit 60 → 5,000 req/hr
+export OPENAI_API_KEY=sk-...
+export GITHUB_TOKEN=ghp_...   # optional — raises rate limit 60 → 5,000 req/hr
 ```
 
 ## Run
@@ -30,8 +38,7 @@ export GITHUB_TOKEN=<your personal access token>   # optional, raises rate limit
 python gh_agent_tool_call.py
 ```
 
-## How it works
-
-Each Python function is passed directly to `AssistantAgent(tools=[...])`. AutoGen reads the `Annotated` type hints for per-parameter descriptions and the docstring for the tool description, then generates the JSON schema that gets sent to the LLM automatically.
-
-The agent receives a user message, reasons over the available tool schemas, decides which to call and with what arguments, receives the result, and continues until it has a final answer — all streamed to the console via `Console(agent.run_stream(...))`.
+Output:
+1. Tool schemas printed — exactly what gets sent to the LLM
+2. Direct tool invocation without an agent
+3. Full agent run streaming `ToolCallMessage` / `ToolCallResultMessage` / `TaskResult`
